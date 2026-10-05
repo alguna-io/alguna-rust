@@ -1,0 +1,92 @@
+# Publishes the alguna crate to crates.io when a merge to main changes the
+# version in Cargo.toml, then tags the commit v<version>. A version that already
+# has its tag is skipped, so other merges publish nothing.
+# crates.io trusted publishing (OIDC) exchanges the GitHub token for a
+# short-lived crates.io token: no crates.io token is stored. crates.io allows
+# trusted publishing only after the first version exists, so a maintainer
+# publishes the first version with an API token.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, so two merges cannot publish the same version twice.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  version:
+    # Releases come from main only, also when the workflow is started by hand.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Read the version and look for its tag
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+          # --exit-code: 0 when the tag exists, 2 when it does not, other codes on errors.
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
+            echo "v${version} is already tagged, so it is already published. Nothing to do."
+            echo "publish=false" >>"$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "${status}" != 2 ]; then exit "${status}"; fi
+            echo "publish=true" >>"$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+
+      # A version already on crates.io (0.1.0 was published by hand to set up trusted
+      # publishing) is not uploaded again; the tag job still records it.
+      - name: Publish
+        run: |
+          if curl -sf -A "alguna-rust publish workflow" "https://crates.io/api/v1/crates/alguna/${VERSION}" >/dev/null; then
+            echo "alguna ${VERSION} is already on crates.io. Only the tag is added."
+          else
+            cargo publish
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+
+  # Tags the released commit last: the tag records that the version is published.
+  # The workflow token pushes it, so it does not start another workflow run.
+  # If only this job fails, use "Re-run failed jobs": a full re-run finds no tag
+  # and uploads the version again, which the registry refuses.
+  tag:
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Push the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          git tag "v${VERSION}" "${GITHUB_SHA}"
+          git push origin "refs/tags/v${VERSION}"

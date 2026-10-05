@@ -1,0 +1,28 @@
+[package]
+name = "alguna"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for the Alguna billing API"
+license = "Apache-2.0"
+repository = "https://github.com/alguna-io/alguna-rust"
+documentation = "https://docs.rs/alguna"
+
+[lib]
+doctest = false
+
+[dependencies]
+bytes = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+fastrand = "2"
+futures = "0.3"
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "rustls-tls"], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-test = "0.4"
+
